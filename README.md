@@ -91,3 +91,4 @@ Many parameters that are pre set can be tweaked. See [Documentation](https://www
 - [ ] investigate GPU utilization issue.
 - [ ] add additional [pooling types](https://www.tensorflow.org/api_docs/python/nn/pooling).
 - [ ] add variable dropout for each dropout layer.
+- [ ] add support for variable image size by using random cropping like [here](https://github.com/Jorba123/Deep-Food/blob/master/TumFoodCam/classification/deep/batch_iterators.py).
