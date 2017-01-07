@@ -5,7 +5,7 @@
     <SchemaVersion>2.0</SchemaVersion>
     <ProjectGuid>{03367fb4-730e-48ba-b55e-b6ce49c39680}</ProjectGuid>
     <ProjectHome />
-    <StartupFile>main.py</StartupFile>
+    <StartupFile>examples\mnist.py</StartupFile>
     <SearchPath />
     <WorkingDirectory>.</WorkingDirectory>
     <OutputPath>.</OutputPath>
@@ -19,13 +19,28 @@
     <VisualStudioVersion Condition=" '$(VisualStudioVersion)' == '' ">10.0</VisualStudioVersion>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="examples\mnist.py">
+      <SubType>Code</SubType>
+    </Compile>
+    <Compile Include="examples\__init__.py">
+      <SubType>Code</SubType>
+    </Compile>
+    <Compile Include="helper.py">
+      <SubType>Code</SubType>
+    </Compile>
     <Compile Include="main.py" />
     <Compile Include="prediction\tf_model.py" />
     <Compile Include="prediction\__init__.py" />
     <Compile Include="test_data.py" />
   </ItemGroup>
   <ItemGroup>
+    <Folder Include="examples\" />
     <Folder Include="prediction" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include=".gitignore" />
+    <Content Include="LICENSE" />
+    <Content Include="README.md" />
   </ItemGroup>
   <Import Project="$(MSBuildExtensionsPath32)\Microsoft\VisualStudio\v$(VisualStudioVersion)\Python Tools\Microsoft.PythonTools.targets" />
 </Project>
