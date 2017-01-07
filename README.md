@@ -23,27 +23,27 @@ The shape of a tuple describing the layer should look like this ```(TF_LAYER.Typ
 ```(layer_parameters)``` is a tuple of parameters for the respective layer:
 
 
-- ```TF_LAYER.Dense```: 
+- **TF_LAYER.Dense**: 
   a. ```layer_parameters[0]```: Number of neurons in layer.
 
 
 
-- ```TF_LAYER.Dropout```: 
+- **TF_LAYER.Dropout**: 
     a. ```layer_parameters[0]```: Keep probability [0, 1].
 
-- ```TF_LAYER.Convolution2D```: 
+- **TF_LAYER.Convolution2D**: 
   a. ```layer_parameters[0]```: Kernel shape. This should be a 1-D list of ints with length 4. ```[5, 5, 1, 32]``` is an example for a small 5x5 kernel where first two dimensions are the patch size (size of the kernel), the next is the number of input channels (either 1 or 3), and the last is the number of output channels.
   b. ```layer_parameters[1]```: Stride. This should be a 1-D list of ints with length 4. The stride of the sliding window for each dimension of input. The stride of the sliding window for each dimension of input. The strides list should have the following format ```[1, stride_horizontal, stride_vertical, 1]``` so ```strides[0] = strides[3] = 1```. Usually ```stride_horizontal = stride_vertical```.
   c. ```layer_parameters[2]``` (_optional_): Padding. Default is ```SAME```. Put in ```None``` if default. Allowed values are ```"SAME", "VALID"```. 
 
 
 
-- ```TF_LAYER.MaxPooling```: 
+- **TF_LAYER.MaxPooling**: 
   a. ```layer_parameters[0]```: Kernel shape. This should be a 1-D list of ints with length 4. ```[1, 2, 2, 1]``` is a common max pooling operation which subsamples / reduces the input size by two with a 2x2 max pooling area.
   b. ```layer_parameters[1]```: Stride. This should be a 1-D list of ints with length 4. The stride of the sliding window for each dimension of input. The strides list should have the following format ```[1, stride_horizontal, stride_vertical, 1]``` so ```strides[0] = strides[3] = 1```. Usually ```stride_horizontal = stride_vertical```.
   c. ```layer_parameters[2]``` (_optional_): Padding. Default is ```SAME```. Put in ```None``` if default. Allowed values are ```"SAME", "VALID"```
 
-- ```TF_LAYER.Normalization```: 
+- **TF_LAYER.Normalization**: 
   a. ```layer_parameters[0]```(_optional_): Depth Radius. Defaults to 5. 0-D. Half-width of the 1-D normalization window. Put in ```None``` if default.
   b. ```layer_parameters[1]```(_optional_): Bias. Defaults to 1. An offset (usually positive to avoid dividing by 0). Put in ```None``` if default.
   c. ```layer_parameters[2]``` (_optional_): Alpha. Defaults to 1. A scale factor, usually positive. Put in ```None``` if default.
