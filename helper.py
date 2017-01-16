@@ -2,7 +2,8 @@ from enum import Enum
 import uuid
 import os
 import errno
-
+import cv2
+from math import sqrt
 
 
 TF_LAYER = Enum('Layer_type', 'Dense Dropout Convolution2D MaxPooling Normalization')
@@ -78,3 +79,78 @@ def tensor_shape_to_list(tensor_shape):
     except:
         return ['?']
     return output
+
+def crop_to_square(image):
+    """ Crops the square window of an image around the center."""
+
+    if image is None:
+        return None
+    w, h = (image.shape[1], image.shape[0])
+    w = float(w)
+    h = float(h)
+
+    # only crop images automatically if the aspect ratio is not bigger than 2 or not smaller than 0.5
+    aspectRatio = w / h
+    if aspectRatio > 3 or aspectRatio < 0.3:
+        return None
+    if aspectRatio == 1.0:
+        return image
+    
+    # the shortest edge is the edge of our new square. b is the other edge
+    a = min(w, h)
+    b = max(w, h)
+
+    # get cropping position
+    x = (b - a) / 2.0
+
+    # depending which side is longer we have to adjust the points
+    # Heigth is longer
+    if h > w:
+        upperLeft = (0, x)        
+    else:
+        upperLeft = (x, 0)
+    cropW = cropH = a    
+    return crop_image(image, upperLeft[0], upperLeft[1], cropW, cropH)
+
+def equalize_image_size(image, size):
+    """ Resizes the image to fit the given size."""
+
+    if image is None:
+        return None
+
+    # image size
+    w, h = (image.shape[1], image.shape[0])
+        
+    if (w*h) != size:
+        # calculate factor so that we can resize the image. The total size of the image (w*h) should be ~ size.
+        # w * x * h * x = size
+        ls = float(h * w)
+        ls = float(size) / ls
+        factor = sqrt(ls)
+        image = resize_image(image, factor)
+    return image
+
+def crop_image(image, x, y, w, h):
+    """ Crops an image.
+
+    Keyword arguments:
+    image -- image to crop
+    x -- upper left x-coordinate
+    y -- upper left y-coordinate
+    w -- width of the cropping window
+    h -- height of the cropping window
+    """
+
+    # crop image using np slicing (http://stackoverflow.com/questions/15589517/how-to-crop-an-image-in-opencv-using-python)
+    image = image[y: y + h, x: x + w]
+    return image
+
+def resize_image(image, resizeFactor):
+    """ Resize image by a positive resizeFactor."""
+
+    return cv2.resize(image, (0,0), fx=resizeFactor, fy=resizeFactor)
+
+def check_if_file_exists(path):
+    """ Cecks if a file exists."""
+
+    return os.path.exists(path)
