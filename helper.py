@@ -72,6 +72,9 @@ def create_loggers():
 
 def tensor_shape_to_list(tensor_shape):
     output = []
-    for dim in tensor_shape:
-        output.append(dim.value)
+    try:
+        for dim in tensor_shape:
+            output.append(dim.value)
+    except:
+        return ['?']
     return output
