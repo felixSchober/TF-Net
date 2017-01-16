@@ -47,8 +47,8 @@ def get_bias_variable(num_neurons, initial_value=0.1, name='biases'):
     return biases
 
 
-def get_placeholders(X_feature_vector_length, batch_size, num_classes):
-    input_features_placeholders = tf.placeholder(tf.float32, shape=(None, 28, 28, 1), name='x-input')
+def get_placeholders(X_feature_vector_shape):
+    input_features_placeholders = tf.placeholder(tf.float32, shape=(None, *X_feature_vector_shape), name='x-input')
     targets_placeholder = tf.placeholder(tf.int32, shape=(None), name='y-input')
     keep_prob_placeholder = tf.placeholder(tf.float32, name='dropout-placeholder')
     return input_features_placeholders, targets_placeholder, keep_prob_placeholder
@@ -574,10 +574,7 @@ class TensorFlowNet(object):
         logger.info('\tNum Classes: {0}'.format(self.num_classes))
         logger.info('\tInitial Learning rate: {0}'.format(self.initial_learning_rate))
         
-        # print model architecture
-        logger.debug('Network architecture')
-        #for type, name, parameters in self.model_architecture:
-        #    logger.info('\t\t{0} {1}\t: {2}'.format(type, name, parameters))
+        
 
 
         with tf.Graph().as_default():
@@ -588,7 +585,7 @@ class TensorFlowNet(object):
             global_step_tensor = tf.Variable(0, trainable=False, name='global_step')
 
             # Generate the input placeholders
-            features_pl, targets_pl, keep_prob_pl = get_placeholders(self.input_shape, self.batch_size, self.num_classes)
+            features_pl, targets_pl, keep_prob_pl = get_placeholders(self.input_shape)
 
             #if self.reshape_input_to is not None:
                 #features_pl = tf.reshape(features_pl, self.reshape_input_to, name='Input-reshaping')
@@ -601,7 +598,11 @@ class TensorFlowNet(object):
             self.features_pl = features_pl
             self.keep_prob_pl = keep_prob_pl
 
+            logger.info('\tInput Features shape: {0}'.format(tensor_shape_to_list(features_pl.get_shape())))
+            logger.info('\tTargets shape: {0}'.format(tensor_shape_to_list(targets_pl.get_shape())))
+
             # build the model
+            logger.debug('Network architecture')
             try:
                 logit_tensor = inference(self.input_shape, self.num_classes, self.model_architecture, features_pl, keep_prob_pl)
             except Exception as e:
