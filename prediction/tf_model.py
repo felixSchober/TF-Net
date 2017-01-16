@@ -17,6 +17,7 @@ import colorama
 #project imports
 from helper import colored_shell_seq, create_dir_if_necessary, TF_LAYER, get_unique_layer_name, tensor_shape_to_list
 
+tf.logging.set_verbosity(tf.logging.INFO)
 
 logger = logging.getLogger('prediction')
 
@@ -64,6 +65,16 @@ def fill_feed_dict(data_set, features_placeholders, targets_placeholders, keep_p
     # reshape if necessary
     if reshape_into is not None:
         features_feed = features_feed.reshape(reshape_into)
+
+    feed_dict = {
+        features_placeholders: features_feed,
+        targets_placeholders: targets_feed,
+        keep_prob_placeholder: keep_prob
+    }
+    return feed_dict
+
+def fill_feed_dict_queue(session, feature_tensor, targets_tensor, features_placeholders, targets_placeholders, keep_prob_placeholder, keep_prob):
+    features_feed, targets_feed = session.run([feature_tensor, targets_tensor])
 
     feed_dict = {
         features_placeholders: features_feed,
@@ -192,7 +203,7 @@ def get_normalization_layer(input_tensor, depth_radius=5, bias=1.0, alpha=1.0, b
 
 
 
-def inference(input_shape, output_shape, architecture, features_pl, keep_prob_pl):
+def inference(input_shape, output_shape, architecture, features_pl, keep_prob_pl, verbose=True):
         """Build the defect prediction model.
 
         Args:
@@ -291,12 +302,13 @@ def inference(input_shape, output_shape, architecture, features_pl, keep_prob_pl
             weights = get_weights_variable(predecessor_shape[1], output_shape)
             biases = get_bias_variable(output_shape)
             logit_tensor = tf.add(tf.matmul(predecessor_tensor, weights), biases, name=scope.name)
-            activation_summary(logit_tensor)
+            if verbose:
+                activation_summary(logit_tensor)
             logger.info('\t\t\t<-- Output: {0}'.format(tensor_shape_to_list(logit_tensor.get_shape())))
         return logit_tensor
 
 
-def loss(logit_tensor, targets_pl):
+def loss(logit_tensor, targets_pl, one_hot_labels):
     """Add L2Loss to all the trainable variables.
 
     Add summary for "Loss" and "Loss/avg".
@@ -310,7 +322,10 @@ def loss(logit_tensor, targets_pl):
     targets = tf.to_int64(targets_pl)
 
     # calculate the average cross entropy loss across the batch.
-    cross_entropy = tf.nn.softmax_cross_entropy_with_logits(logit_tensor, targets, name='cross_entropy_per_example')
+    if one_hot_labels:
+        cross_entropy = tf.nn.softmax_cross_entropy_with_logits(logit_tensor, targets, name='cross_entropy_per_example')
+    else:
+        cross_entropy = tf.nn.sparse_softmax_cross_entropy_with_logits(logit_tensor, targets, name='cross_entropy_per_example_sparse')
     cross_entropy_mean = tf.reduce_mean(cross_entropy, name='cross_entropy_mean')
     tf.add_to_collection('losses', cross_entropy_mean)
     tf.summary.scalar('loss', cross_entropy_mean)
@@ -336,22 +351,6 @@ def accuracy(logits, targets_pl, one_hot=False):
     accuracy = tf.reduce_mean(tf.cast(correct_prediction, 'float32'), name='accuracy_mean')
     tf.summary.scalar('accuracy_mean', accuracy)
     return accuracy
-
-
-def logistic_regression_inference(input_size, output_size, features_pl):
-    W = tf.Variable(tf.zeros([input_size, output_size]))
-    b = tf.Variable(tf.zeros([output_size]))
-
-    logit = tf.nn.softmax(tf.matmul(features_pl, W) + b)
-    activation_summary(logit)
-    return logit
-
-def loss_logistic_regression(logit_tensor, targets_pl):
-    targets = tf.to_int64(targets_pl)
-
-    cost = tf.reduce_mean(-tf.reduce_sum(targets_pl*tf.log(logit_tensor), reduction_indices=1))
-    tf.summary.scalar('cost', cost)
-    return cost
 
 def validate_architecture(architecture):
     # For documentation see https://github.com/Jorba123/tf_net/blob/master/README.md
@@ -441,7 +440,9 @@ class TensorFlowNet(object):
                 num_epochs_per_decay=150,
                 learning_rate_decay_factor=0.1,
                 model_name=str(int(time.time())),
-                early_stopping_epochs = 50):
+                early_stopping_epochs = 50,
+                verbose=True):
+
         self.sess = None
         self.saver = None
         self.input_shape = input_shape
@@ -476,6 +477,14 @@ class TensorFlowNet(object):
 
         # how much does the learning rate decay after num_epochs_per_decay
         self.learning_rate_decay_factor = learning_rate_decay_factor
+
+        # determine if the dataset is a tfrecords dataset
+        try:
+            self.tf_records_dataset = train_data_set.is_tfrecords_dataset
+        except:
+            self.tf_records_dataset = False
+
+        self.verbose = verbose
 
         # the last layer of the net used after training for prediction
         self.model = None 
@@ -522,8 +531,9 @@ class TensorFlowNet(object):
         train_op = optimizer.minimize(loss_tensor, global_step=global_step)
 
         # add histogram for each trainable variable
-        for var in tf.trainable_variables():
-            tf.summary.histogram(var.op.name, var)
+        if self.verbose:
+            for var in tf.trainable_variables():
+                tf.summary.histogram(var.op.name, var)
 
         return train_op
 
@@ -562,6 +572,7 @@ class TensorFlowNet(object):
         logger.info('\tReshape input to {0}'.format(self.reshape_input_to))
         logger.info('\tTargets Shape {0}'.format(self.targets_shape))
         logger.info('\tOne-Hot Targets {0}'.format(self.one_hot))
+        logger.info('\tTfRecords Dataset: {0}'.format(self.tf_records_dataset))
 
         try:
             logger.info('\tTrain Zero Error: {0}'.format(self.train.zero_error))
@@ -587,6 +598,20 @@ class TensorFlowNet(object):
             # Generate the input placeholders
             features_pl, targets_pl, keep_prob_pl = get_placeholders(self.input_shape)
 
+            # get input tensors if tfrecords dataset
+            if self.tf_records_dataset:
+                train_image_tensor, train_label_tensor = self.train.get_normal_image_tensor(self.batch_size, self.max_epochs)
+                test_image_tensor, test_label_tensor = self.test.get_normal_image_tensor(self.batch_size, self.max_epochs)
+                
+                logger.info('\tTrain Image Tensor Shape: {0} - Train Label Tensor Shape {1}'.format(tensor_shape_to_list(train_image_tensor.get_shape()), tensor_shape_to_list(train_label_tensor.get_shape())))
+                logger.info('\tTest Image Tensor Shape: {0} - Test Label Tensor Shape {1}'.format(tensor_shape_to_list(test_image_tensor.get_shape()), tensor_shape_to_list(test_label_tensor.get_shape())))
+
+                # Log images
+                reshape_to = [-1, *self.input_shape]
+                if self.verbose:
+                    tf.summary.image('train_image', tf.reshape(train_image_tensor, shape=reshape_to), max_outputs=10)
+                    tf.summary.image('test_image', tf.reshape(test_image_tensor, shape=reshape_to), max_outputs=10)
+
             #if self.reshape_input_to is not None:
                 #features_pl = tf.reshape(features_pl, self.reshape_input_to, name='Input-reshaping')
 
@@ -598,13 +623,13 @@ class TensorFlowNet(object):
             self.features_pl = features_pl
             self.keep_prob_pl = keep_prob_pl
 
-            logger.info('\tInput Features shape: {0}'.format(tensor_shape_to_list(features_pl.get_shape())))
-            logger.info('\tTargets shape: {0}'.format(tensor_shape_to_list(targets_pl.get_shape())))
+            logger.info('\tInput Pl Features shape: {0}'.format(tensor_shape_to_list(features_pl.get_shape())))
+            logger.info('\tTargets Pl shape: {0}'.format(tensor_shape_to_list(targets_pl.get_shape())))
 
             # build the model
             logger.debug('Network architecture')
             try:
-                logit_tensor = inference(self.input_shape, self.num_classes, self.model_architecture, features_pl, keep_prob_pl)
+                logit_tensor = inference(self.input_shape, self.num_classes, self.model_architecture, features_pl, keep_prob_pl, self.verbose)
             except Exception as e:
                 logger.exception('Could not create model.')
                 raise e
@@ -612,8 +637,10 @@ class TensorFlowNet(object):
             self.model = logit_tensor
 
             # add loss tensor to graph
-            loss_tensor = loss(logit_tensor, targets_pl)
+            loss_tensor = loss(logit_tensor, targets_pl, self.one_hot)
 
+            # make sure that the last layer and the labels have the same dimension
+            
 
             # create gradient training op
             train_op = self.get_train_op(loss_tensor, global_step_tensor)
@@ -626,7 +653,8 @@ class TensorFlowNet(object):
             summary_tensor = tf.summary.merge_all()
 
             # add variables initializer
-            init = tf.global_variables_initializer()
+            init_global = tf.global_variables_initializer()
+            init_local = tf.local_variables_initializer()
 
             # initialize model saver
             self.saver = tf.train.Saver(write_version=tf.train.SaverDef.V2)
@@ -638,7 +666,13 @@ class TensorFlowNet(object):
             summary_writer_test = tf.summary.FileWriter(os.path.join(self.log_dir, 'test'))
 
             # initialize variables
-            self.sess.run(init)
+            logger.info('Initializing tf variables.')
+            self.sess.run(init_global)
+            self.sess.run(init_local)
+
+            # Start the queue runners.
+            coord = tf.train.Coordinator()
+            threads = tf.train.start_queue_runners(sess=self.sess, coord=coord)
 
             logger.info('Neural Net is initialized and ready to train.')
             print('\n')
@@ -651,107 +685,144 @@ class TensorFlowNet(object):
             start_time = time.time()
             average_train_loss = 0  
             early_stopping = False      
-            test_feed_dict = fill_feed_dict(
-                self.test, 
-                features_pl, 
-                targets_pl, 
-                keep_prob_pl, 
-                keep_prob=1.0, 
-                batch_size=self.test.num_examples, 
-                shuffle=False, 
-                reshape_into=self.reshape_input_to)
+            if not self.tf_records_dataset:
+                test_feed_dict = fill_feed_dict(
+                    self.test, 
+                    features_pl, 
+                    targets_pl, 
+                    keep_prob_pl, 
+                    keep_prob=1.0, 
+                    batch_size=self.test.num_examples, 
+                    shuffle=False, 
+                    reshape_into=self.reshape_input_to)
+            try:
+                for epoch in range(self.max_epochs):                
 
-            for epoch in range(self.max_epochs):                
+                    for step in range(self.steps_per_epoch):
+                        # fill feed dict with batch
+                        if self.tf_records_dataset:
+                            # session, feature_tensor, targets_tensor, features_placeholders, targets_placeholders, keep_prob_placeholder, keep_prob
+                            train_feed_dict = fill_feed_dict_queue(
+                                self.sess,
+                                train_image_tensor,
+                                train_label_tensor, 
+                                features_pl, 
+                                targets_pl, 
+                                keep_prob_pl, 
+                                keep_prob=0.5)
 
-                for step in range(self.steps_per_epoch):
-                    # fill feed dict with batch
-                    train_feed_dict = fill_feed_dict(
-                        self.train, 
-                        features_pl, 
-                        targets_pl, 
-                        keep_prob_pl, 
-                        keep_prob=0.5, 
-                        batch_size=self.batch_size, 
-                        reshape_into=self.reshape_input_to
-                        )
+                            test_feed_dict = fill_feed_dict_queue(
+                                self.sess,
+                                test_image_tensor,
+                                test_label_tensor, 
+                                features_pl, 
+                                targets_pl, 
+                                keep_prob_pl, 
+                                keep_prob=1.0)
+                        else: 
+                            train_feed_dict = fill_feed_dict(
+                                self.train, 
+                                features_pl, 
+                                targets_pl, 
+                                keep_prob_pl, 
+                                keep_prob=0.5, 
+                                batch_size=self.batch_size, 
+                                reshape_into=self.reshape_input_to
+                                )
 
-                    # run the model
-                    # _: result of train_op (is None)
-                    # loss_value: result of loss operation (the actual loss)
-                    train_loss_value = -1
-                    try:                    
-                        _, train_loss_value = self.sess.run(
-                            [train_op, loss_tensor],
-                            feed_dict=train_feed_dict)
-                    except:
-                        logger.exception('Could not run train epoch {0} step {1}. Loss Value: {2}'.format(epoch, self.global_step, train_loss_value))
-
-                    assert not np.isnan(train_loss_value), 'Model diverged with loss = NaN'
-                    average_train_loss += train_loss_value
-                    self.global_step += 1
-
-                    summary_str_train = self.sess.run(summary_tensor, feed_dict=train_feed_dict)
-                    summary_str_test = self.sess.run(summary_tensor, feed_dict=test_feed_dict)
-
-                    summary_writer_train.add_summary(summary_str_train, self.global_step)
-                    summary_writer_train.flush()
-                    summary_writer_test.add_summary(summary_str_test, self.global_step)
-                    summary_writer_test.flush()
-
-                # Write summaries SUMMARY_EVERY_X_EPOCHS.
-                if epoch % SUMMARY_EVERY_X_EPOCHS == 0:
-                    duration = time.time() - start_time
-                    start_time = time.time()    
-
-
-                    # compute detailed stats                    
-                    train_feed_dict = fill_feed_dict(
-                        self.train, 
-                        features_pl, 
-                        targets_pl, 
-                        keep_prob_pl, 
-                        keep_prob=1.0, 
-                        batch_size=self.batch_size, 
-                        shuffle=False, 
-                        reshape_into=self.reshape_input_to)
-
-                    # don't take the average in the first step
-                    if epoch > 0:
-                        average_train_loss /= (self.steps_per_epoch * SUMMARY_EVERY_X_EPOCHS)
-
-                    try:
-                        train_accuracy_value = self.sess.run([accuracy_tensor], feed_dict=train_feed_dict)[0]
-                        test_accuracy_value, test_loss_value = self.sess.run([accuracy_tensor, loss_tensor], feed_dict=test_feed_dict)
-                    except:
-                        logger.exception('Could not compute train- and test accuracy values in epoch {0}, step {1}.'.format(epoch, self.global_step))
-                        train_accuracy_value = test_accuracy_value = -1
-                        train_num_examples, train_true_count, train_precision = self.do_eval(eval_correct, features_pl, targets_pl, keep_prob_pl, self.train)
-                        test_num_examples, test_true_count, test_precision = self.do_eval(eval_correct, features_pl, targets_pl, keep_prob_pl, self.test)
-
-                        logger.debug('Train: Num examples: {0}\tNum correct: {1}\tPrecision: {2:.4f}'.format(train_num_examples, train_true_count, train_precision))
-                        logger.debug('Test: Num examples: {0}\tNum correct: {1}\tPrecision: {2:.4f}'.format(test_num_examples, test_true_count, test_precision))
-                    logger.debug('{0}\t\t{1:.4f}\t{2:.5f}'.format(epoch, train_loss_value, duration))                  
-                                        
-                    # if early stopping is True abort training and write a last summary
-                    early_stopping = self.early_stopping(epoch, test_loss_value)
-
-                    
-                    # only save checkpoint if the test loss improved
-                    if test_accuracy_value > self.best_test_precission:
-                        checkpoint_file = os.path.join(self.log_dir, 'model')                    
-                        try:
-                            self.save_model(checkpoint_file, step)
+                        # run the model
+                        # _: result of train_op (is None)
+                        # loss_value: result of loss operation (the actual loss)
+                        train_loss_value = -1
+                        try:                    
+                            _, train_loss_value = self.sess.run(
+                                [train_op, loss_tensor],
+                                feed_dict=train_feed_dict)
                         except:
-                            logger.exception('Could not save model.')
+                            logger.exception('Could not run train epoch {0} step {1}. Loss Value: {2}'.format(epoch, self.global_step, train_loss_value))
 
-                    self.print_step_summary_and_update_best_values(epoch, average_train_loss, train_accuracy_value, test_loss_value, test_accuracy_value, duration, colored=True)
+                        assert not np.isnan(train_loss_value), 'Model diverged with loss = NaN'
+                        average_train_loss += train_loss_value
+                        self.global_step += 1
+
+                        summary_str_train = self.sess.run(summary_tensor, feed_dict=train_feed_dict)
+                        summary_str_test = self.sess.run(summary_tensor, feed_dict=test_feed_dict)
+
+                        summary_writer_train.add_summary(summary_str_train, self.global_step)
+                        summary_writer_train.flush()
+                        summary_writer_test.add_summary(summary_str_test, self.global_step)
+                        summary_writer_test.flush()
+
+                    # Write summaries SUMMARY_EVERY_X_EPOCHS.
+                    if epoch % SUMMARY_EVERY_X_EPOCHS == 0:
+                        duration = time.time() - start_time
+                        start_time = time.time()    
+
+
+                        # compute detailed stats          
+                        if not self.tf_records_dataset:          
+                            train_feed_dict = fill_feed_dict(
+                                self.train, 
+                                features_pl, 
+                                targets_pl, 
+                                keep_prob_pl, 
+                                keep_prob=1.0, 
+                                batch_size=self.batch_size, 
+                                shuffle=False, 
+                                reshape_into=self.reshape_input_to)
+                        else:
+                            test_feed_dict = fill_feed_dict_queue(
+                                self.sess,
+                                test_image_tensor,
+                                test_label_tensor, 
+                                features_pl, 
+                                targets_pl, 
+                                keep_prob_pl, 
+                                keep_prob=1.0)
+
+                        # don't take the average in the first step
+                        if epoch > 0:
+                            average_train_loss /= (self.steps_per_epoch * SUMMARY_EVERY_X_EPOCHS)
+
+                        try:
+                            train_accuracy_value = self.sess.run([accuracy_tensor], feed_dict=train_feed_dict)[0]
+                            test_accuracy_value, test_loss_value = self.sess.run([accuracy_tensor, loss_tensor], feed_dict=test_feed_dict)
+                        except:
+                            logger.exception('Could not compute train- and test accuracy values in epoch {0}, step {1}.'.format(epoch, self.global_step))
+                            train_accuracy_value = test_accuracy_value = -1
+                            train_num_examples, train_true_count, train_precision = self.do_eval(eval_correct, features_pl, targets_pl, keep_prob_pl, self.train)
+                            test_num_examples, test_true_count, test_precision = self.do_eval(eval_correct, features_pl, targets_pl, keep_prob_pl, self.test)
+
+                            logger.debug('Train: Num examples: {0}\tNum correct: {1}\tPrecision: {2:.4f}'.format(train_num_examples, train_true_count, train_precision))
+                            logger.debug('Test: Num examples: {0}\tNum correct: {1}\tPrecision: {2:.4f}'.format(test_num_examples, test_true_count, test_precision))
+                        logger.debug('{0}\t\t{1:.4f}\t{2:.5f}'.format(epoch, train_loss_value, duration))                  
+                                        
+                        # if early stopping is True abort training and write a last summary
+                        early_stopping = self.early_stopping(epoch, test_loss_value)
+
                     
-                    average_train_loss = 0
+                        # only save checkpoint if the test loss improved
+                        if test_accuracy_value > self.best_test_precission:
+                            checkpoint_file = os.path.join(self.log_dir, 'model')                    
+                            try:
+                                self.save_model(checkpoint_file, step)
+                            except:
+                                logger.exception('Could not save model.')
 
-                    if early_stopping:
-                        print('-----\n\n')
-                        logger.info('Early stopping after {0} steps.'.format(epoch))                    
-                        break
+                        self.print_step_summary_and_update_best_values(epoch, average_train_loss, train_accuracy_value, test_loss_value, test_accuracy_value, duration, colored=True)
+                    
+                        average_train_loss = 0
+
+                        if early_stopping:
+                            print('-----\n\n')
+                            logger.info('Early stopping after {0} steps.'.format(epoch))                    
+                            break
+
+            except:
+                logger.exception('Exception while training.')
+            finally:
+                # When done, ask the threads to stop.                
+                coord.request_stop()
 
             logger.info('Training complete.')
             logger.info('Restoring best model.') 
@@ -764,6 +835,10 @@ class TensorFlowNet(object):
             #    print('..')
             #else:
             #    logger.error('Could not restore model. No model found.')
+
+            # Wait for threads to finish.
+            coord.join(threads)
+            self.sess.close()
 
             logger.info('Best Losses: Train {0:.5f} - Test: {1:.5f}'.format(self.best_train_loss, self.best_test_loss)) 
             logger.info('Best Precisions: Train {0:.5f} - Test: {1:.5f}'.format(self.best_train_precission, self.best_test_precission)) 
@@ -839,17 +914,7 @@ class TensorFlowNet(object):
 
         print('{0}\t'.format(epoch) + train_string + test_string + colored_shell_seq('WHITE') + '{0:.3f}'.format(duration))
               
-
-
-    def add_summaries(self, var):
-        with tf.name_scope('summaries'):
-            mean = tf.reduce_mean(var)
-            tf.summary.scalar('mean', mean)
-            with tf.name_scope('stddev'):
-                stddev = tf.sqrt(tf.reduce_mean(tf.square(var - mean)))
-            tf.summary.scalar('stddev', stddev)
-            tf.summary.histogram('histogram', var)
-
+        
     def save_model(self, checkpoint_file, step):
         if self.saver is None:
             raise Exception('Could not save model because saver is not initialized. Models can only be saved during training. Model dump: ' + str(self))
